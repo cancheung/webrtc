@@ -154,14 +154,83 @@ a=rtpmap:111 opus/48000/2
 		assert.False(t, m.negotiatedVideo)
 		assert.True(t, m.negotiatedAudio)
 
-		absID, absAudioEnabled, absVideoEnabled := m.GetHeaderExtensionID(RTPHeaderExtensionCapability{sdp.ABSSendTimeURI})
+		absID, absAudioEnabled, absVideoEnabled := m.getHeaderExtensionID(RTPHeaderExtensionCapability{sdp.ABSSendTimeURI})
 		assert.Equal(t, absID, 0)
 		assert.False(t, absAudioEnabled)
 		assert.False(t, absVideoEnabled)
 
-		midID, midAudioEnabled, midVideoEnabled := m.GetHeaderExtensionID(RTPHeaderExtensionCapability{sdp.SDESMidURI})
+		midID, midAudioEnabled, midVideoEnabled := m.getHeaderExtensionID(RTPHeaderExtensionCapability{sdp.SDESMidURI})
 		assert.Equal(t, midID, 7)
 		assert.True(t, midAudioEnabled)
 		assert.False(t, midVideoEnabled)
+	})
+}
+
+func TestMediaEngineHeaderExtensionDirection(t *testing.T) {
+	registerCodec := func(m *MediaEngine) {
+		assert.NoError(t, m.RegisterCodec(
+			RTPCodecParameters{
+				RTPCodecCapability: RTPCodecCapability{mimeTypeOpus, 48000, 0, "", nil},
+				PayloadType:        111,
+			}, RTPCodecTypeAudio))
+	}
+
+	extmapRegex := regexp.MustCompile("extmap")
+
+	t.Run("No Direction", func(t *testing.T) {
+		offerEngine := &MediaEngine{}
+		registerCodec(offerEngine)
+		assert.NoError(t, offerEngine.RegisterHeaderExtension(RTPHeaderExtensionCapability{"pion-header-test"}, RTPCodecTypeAudio))
+
+		offerer, err := NewAPI(WithMediaEngine(offerEngine)).NewPeerConnection(Configuration{})
+		assert.NoError(t, err)
+
+		_, err = offerer.AddTransceiverFromKind(RTPCodecTypeAudio)
+		assert.NoError(t, err)
+
+		offer, err := offerer.CreateOffer(nil)
+		assert.NoError(t, err)
+
+		assert.Equal(t, 1, len(extmapRegex.FindAllStringIndex(offer.SDP, -1)))
+
+		assert.NoError(t, offerer.Close())
+	})
+
+	t.Run("Same Direction", func(t *testing.T) {
+		offerEngine := &MediaEngine{}
+		registerCodec(offerEngine)
+		assert.NoError(t, offerEngine.RegisterHeaderExtension(RTPHeaderExtensionCapability{"pion-header-test"}, RTPCodecTypeAudio, RTPTransceiverDirectionRecvonly))
+
+		offerer, err := NewAPI(WithMediaEngine(offerEngine)).NewPeerConnection(Configuration{})
+		assert.NoError(t, err)
+
+		_, err = offerer.AddTransceiverFromKind(RTPCodecTypeAudio, RTPTransceiverInit{Direction: RTPTransceiverDirectionRecvonly})
+		assert.NoError(t, err)
+
+		offer, err := offerer.CreateOffer(nil)
+		assert.NoError(t, err)
+
+		assert.Equal(t, 1, len(extmapRegex.FindAllStringIndex(offer.SDP, -1)))
+
+		assert.NoError(t, offerer.Close())
+	})
+
+	t.Run("Different Direction", func(t *testing.T) {
+		offerEngine := &MediaEngine{}
+		registerCodec(offerEngine)
+		assert.NoError(t, offerEngine.RegisterHeaderExtension(RTPHeaderExtensionCapability{"pion-header-test"}, RTPCodecTypeAudio, RTPTransceiverDirectionSendonly))
+
+		offerer, err := NewAPI(WithMediaEngine(offerEngine)).NewPeerConnection(Configuration{})
+		assert.NoError(t, err)
+
+		_, err = offerer.AddTransceiverFromKind(RTPCodecTypeAudio, RTPTransceiverInit{Direction: RTPTransceiverDirectionRecvonly})
+		assert.NoError(t, err)
+
+		offer, err := offerer.CreateOffer(nil)
+		assert.NoError(t, err)
+
+		assert.Equal(t, 0, len(extmapRegex.FindAllStringIndex(offer.SDP, -1)))
+
+		assert.NoError(t, offerer.Close())
 	})
 }
